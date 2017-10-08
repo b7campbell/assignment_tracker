@@ -29,7 +29,7 @@ function check_bundler {
 }
 
 function run_app {
-  bundle exec ruby lib/assignment_tracker.rb
+  bundle exec rake run --silent
 }
 
 #=================

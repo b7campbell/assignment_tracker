@@ -1,6 +1,7 @@
 require 'date'
 require 'tty'
 
+require_relative 'assignment_tracker/config.rb'
 require_relative 'assignment_tracker/db.rb'
 require_relative 'assignment_tracker/terminal.rb'
 
@@ -27,12 +28,21 @@ module AssignmentTracker
 				case @prompt.expand(' > Choose a command: ', @@choices)
 				when :add_assignment
           add_assignment
-				when :print
-          print_assignments
+				when :archive_assignment
+          archive_assignment
+				when :delete_assignment
+          delete_assignment
+				when :list_active_assignments
+          list_assignments
+          TerminalHelper.wait
+				when :list_all_assignments
+          list_all_assignments
           TerminalHelper.wait
 				when :quit
 					quit
 					break
+        when :update_assignment
+          update_assignment
 				end
 			end 
 		end
@@ -40,20 +50,15 @@ module AssignmentTracker
 		private
 
 		@@choices = [
-									{ key: 'a', name: 'add new assignment',            value: :add_assignment    },
-									{ key: 'p', name: 'print all open assignments',    value: :print             },
-									{ key: 'q', name: 'close program?',                value: :quit              }
+									{ key: 'a', name: 'add new assignment',            value: :add_assignment          },
+									{ key: 'r', name: 'archive assignment',            value: :archive_assignment      },
+									{ key: 'd', name: 'delete assignment',             value: :delete_assignment       },
+									{ key: 'l', name: 'print all open assignments',    value: :list_active_assignments },
+									{ key: 'p', name: 'print all assignments',         value: :list_all_assignments    },
+									{ key: 'q', name: 'close program',                 value: :quit                    },
+									{ key: 'u', name: 'update assignment',             value: :update_assignment       }
 								]
 	 
-		def user_guess
-			@prompt.ask("Enter approximate number of additions or hit return: ") do |answer|
-				answer.default  '1'
-				answer.required false
-				answer.validate /^\d\d?$/
-				answer.convert  :int
-			end
-		end
-
     def select_yes_or_no(message)
       @prompt.select(message) do |menu|
         menu.choice 'no',  false
@@ -62,29 +67,151 @@ module AssignmentTracker
     end
 
 		def add_assignment
-			number_of_times_to_skip_prompt = user_guess - 1
-			if number_of_times_to_skip_prompt < 0
-				@prompt.warn('Aborting add command. Return to root menu')
-				return
-			end
-
+			return unless select_yes_or_no('Continue?')
 			loop do
 				@db.add_assignment(build_assignment)
-
-				if number_of_times_to_skip_prompt.zero?
-					break unless select_yes_or_no('Continue adding entries?')
-				else
-					number_of_times_to_skip_prompt = number_of_times_to_skip_prompt - 1
-				end
+				break unless select_yes_or_no('Continue adding entries?')
 			end
 		end
+
+		def archive_assignment
+			loop do
+        colval = ask_for_column_and_value('select which parameter to search by: ')
+        break if colval == :cancel
+
+        as = @db.select_assignments_by_colval(*colval)
+
+        if as.nil? || as.empty?
+          puts "No matches found."
+          TerminalHelper.newline
+          next
+        end
+
+        a = select_open_assignment(as)
+
+        if a.nil?
+          puts "No matches found."
+          TerminalHelper.newline
+          next
+        end
+
+        TerminalHelper.redraw_terminal
+        TerminalHelper.newline
+        puts a.as_cli_string
+        TerminalHelper.newline
+
+        if select_yes_or_no('Archive this entry?')
+          @db.archive_assignment(a)
+        end
+        if select_yes_or_no('Return to main menu?')
+          break
+        end
+			end
+		end
+
+    def delete_assignment
+      loop do
+        colval = ask_for_column_and_value('select which parameter to search by: ')
+        break if colval == :cancel
+
+        as = @db.select_assignments_by_colval(*colval)
+
+        if as.nil? || as.empty?
+          puts "No matches found."
+          TerminalHelper.newline
+          next
+        end
+
+        a = select_an_assignment(as)
+
+        if a.nil?
+          puts "No matches found."
+          TerminalHelper.newline
+          next
+        end
+
+        TerminalHelper.redraw_terminal
+        TerminalHelper.newline
+        puts a.as_cli_string
+        TerminalHelper.newline
+
+        if select_yes_or_no('Delete this entry?')
+          @db.delete_assignment(a)
+        end
+        if select_yes_or_no('Return to main menu?')
+          break
+        end
+      end
+    end
+
+    def list_assignments
+      TerminalHelper.newline
+      puts @db.list_assignments
+      TerminalHelper.newline
+    end
+
+    def list_all_assignments
+      TerminalHelper.newline
+      puts @db.list_all_assignments
+      TerminalHelper.newline
+    end
+
+		def quit
+			puts "Quitting..."
+			TerminalHelper.exit_routine
+		end
+
+    def update_assignment
+      loop do
+        colval = ask_for_column_and_value('select which parameter to search by: ')
+        break if colval == :cancel
+
+        as = @db.select_assignments_by_colval(*colval)
+
+        if as.nil? || as.empty?
+          puts "No matches found."
+          TerminalHelper.newline
+          next
+        end
+
+        a = select_an_assignment(as)
+
+        if a.nil?
+          puts "No matches found."
+          TerminalHelper.newline
+          next
+        end
+
+        TerminalHelper.redraw_terminal
+        TerminalHelper.newline
+        puts a.as_cli_string
+        TerminalHelper.newline
+
+        puts 'pick column to update'
+        col, val = ask_for_column_and_value('select which parameter to edit: ')
+
+        if val
+          puts "will update assignment's '#{col}' to '#{val}'"
+        end
+
+        if val && select_yes_or_no('Update this entry?')
+          @db.update_assignment(a, col, val)
+        end
+        if select_yes_or_no('Return to main menu?')
+          break
+        end
+      end
+    end
 
     #
     # Build Assignment Object
     #
 
     def ask_for_name
-      @prompt.ask("assignment name: ").chomp
+      @prompt.ask("assignment name: ") do |answer|
+        answer.required true
+        answer.validate /^\S.*$/
+      end.chomp
     end
 
     def ask_for_klass
@@ -93,12 +220,14 @@ module AssignmentTracker
       end.chomp.upcase
     end
 
-    def read_in_date(str)
+    def ask_for_date(str)
       # TODO: handle leap days
       date = nil
       year = Time.now.year
       loop do
-        date = @prompt.ask("#{str} date: ")
+        date = @prompt.ask("#{str} date: ") do |answer|
+          answer.default "#{Time.now.month}/#{Time.now.day}"
+        end
         valid = Date.strptime(date, "%m/%d") rescue false
 
         if valid
@@ -129,9 +258,11 @@ module AssignmentTracker
     end
 
     def ask_for_progress
-      @prompt.ask("progress (1. Not Started, 2. Planned, 3. In Progress, 4. Finished) : ") do |answer|
-        answer.validate /^[1-4]$/
-        answer.convert  :int
+      @prompt.select("select most accurate progress tag: ") do |menu|
+        menu.choice 'Not Started', NotStarted
+        menu.choice 'Planned',     Planned
+        menu.choice 'In Progress', InProgress
+        menu.choice 'Finished',    Finished
       end
     end
 
@@ -151,6 +282,7 @@ module AssignmentTracker
           menu.choice 'due date',      :due_date
           menu.choice 'progress',      :progress
           menu.choice 'note',          :note
+          menu.choice 'archived?',     :archive
           menu.choice 'cancel',        :cancel
         end
     end
@@ -158,14 +290,14 @@ module AssignmentTracker
     def build_assignment
       name          = ask_for_name
       klass         = ask_for_klass
-      assigned_date = read_in_date('assigned')
-      due_date      = read_in_date('due')
+      assigned_date = ask_for_date('assigned')
+      due_date      = ask_for_date('due')
       archived      = 0
       progress      = ask_for_progress
       note          = ask_for_note
 
       a = Assignment.new(name=name, klass=klass, assigned_date=assigned_date,\
-                             due_date=due_date, archived=archived, progress=progress, note=note)
+                             due_date=due_date, progress=progress, archived=archived, note=note)
 
       loop do
         TerminalHelper.redraw_terminal
@@ -173,75 +305,116 @@ module AssignmentTracker
         puts a.as_cli_string
         TerminalHelper.newline
 
-        # TODO: chase out missing progress bar bug
-        puts a.assigned_date
-        puts a.due_date
-        puts a.days_left
-
         break if select_yes_or_no("Everything look right?")
+        a = edit_param(a)
+      end
+      a
+    end
 
-        param = ask_which_param_to_edit
+    def edit_param(a)
+      param = ask_which_param_to_edit
 
-        case param
-        when :name
-          a.name = ask_for_name
-        when :klass
-          a.klass = ask_for_klass
-        when :assigned
-          a.assigned_date = read_in_date('assigned')
-        when :due_date
-          a.due_date = read_in_date('due')
-        when :progress
-          a.progress = ask_for_progress
-        when :note
-          a.note = ask_for_note
-        when :cancel
+      case param
+      when :name
+        a.name = ask_for_name
+      when :klass
+        a.klass = ask_for_klass
+      when :assigned
+        a.assigned_date = read_in_date('assigned')
+      when :due_date
+        a.due_date = read_in_date('due')
+      when :progress
+        a.progress = ask_for_progress
+      when :archive
+        a.archived = select_yes_or_no("Should assignment be archived?")
+      when :note
+        a.note = ask_for_note
+      when :cancel
+      else
+        @prompt.warn("Unknown error in param selection occured")
+      end
+      a
+    end
+
+    #
+    # functions for removal
+    #
+    def ask_for_column_and_value(msg)
+      col = @prompt.select(msg) do |menu|
+        menu.choice 'name', 'name'
+        menu.choice 'class', 'klass'
+        menu.choice 'assigned date', 'adate'
+        menu.choice 'due date', 'ddate'
+        menu.choice 'archived', 'archived'
+        menu.choice 'progress', 'progress'
+        menu.choice 'note', 'note'
+        menu.choice 'cancel', :cancel
+      end
+
+      return :cancel if col == :cancel
+
+      val = @prompt.ask("give value for column #{col}: ")
+      return [col, val]
+    end
+
+    def select_open_assignment(as)
+      id = 0
+      TerminalHelper.newline
+      as.reject { |a| a.archived }.each do |a|
+        puts "Id: #{id}"
+        puts a.as_cli_string
+        TerminalHelper.newline
+
+        id += 1
+      end
+
+      return nil if id.zero? 
+
+      index = nil
+      loop do
+        index = @prompt.ask("by id, select which row to work with") do |answer|
+          answer.validate /^\d+$/
+          answer.convert  :int
+        end
+
+        if index.between?(0,id-1)
           break
         else
-          @prompt.warn("Unknown error in param selection occured")
+          @prompt.warn("id chosen out of bounds")
         end
       end
+      return as[index]
     end
 
-=begin
-		def remove_entry
-			index = @prompt.ask( "Remove which item? [ 0 is abort ]" ) do |answer|
-				answer.default  '0'
-				answer.required false
-				answer.validate /\d+$/
-				answer.convert  :int
-			end
-
-			if index.zero?
-				@prompt.warn( 'Aborting remove command. Return to root menu')
-				sleep 1
-				return 
-			end
-			
-			removed = @ri.remove_entry(index - 1)  
-			puts "Removed: #{removed}"
-		end
-=end
-
-    def print_assignments
+    def select_an_assignment(as)
+      id = 0
       TerminalHelper.newline
-      puts @db.list_assignments
-      TerminalHelper.newline
+      as.each do |a|
+        puts "Id: #{id}"
+        puts a.as_cli_string
+        TerminalHelper.newline
+
+        id += 1
+      end
+
+      return nil if id.zero?
+
+      index = nil
+      loop do
+        index = @prompt.ask("by id, select which row to work with") do |answer|
+          answer.validate /^\d+$/
+          answer.convert  :int
+        end
+
+        if index.between?(0,id-1)
+          break
+        else
+          @prompt.warn("id chosen out of bounds")
+        end
+      end
+      return as[index]
     end
 
-		def quit
-			puts "Quitting..."
-			TerminalHelper.exit_routine
-		end
-=begin
-		def commit_changes_to_file
-			if select_yes_or_no( 'Save Changes?')
-				@ri.write_itemlist_to_file
-			else
-				@prompt.warn '  Print Aborted'
-			end
-		end
-=end
 	end
 	# ===========================
 	# Build Object and Enter Loop

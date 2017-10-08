@@ -1,33 +1,12 @@
 
 #
-# Vars 
-#
-#
-tmp_dir = 'tmp'
-
-#
-# Dirs 
-#
-#
-directory tmp_dir
-
-#
 # Tasks 
 #
 
-task :default => :print_help
+task :default => :run
 
-desc "TODO: default task"
-task :print_help do
- puts "make me show assignments"
-end
-
-desc "TODO: test"
-task :test => tmp_dir do
+desc 'start application'
+task :run do
   ruby 'lib/assignment_tracker.rb'
 end
 
-desc "clean up directory"
-task :clean do
-  Dir::rmdir(tmp_dir)
-end
